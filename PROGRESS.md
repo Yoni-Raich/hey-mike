@@ -1,13 +1,13 @@
 # Progress
 
-## Banked Codex rate-limit resets per account — 2026-11-27
+## Banked rate-limit resets per account (Codex, Antigravity) — 2026-11-27
 
 - Codex `account/rateLimits/read` returns `rateLimitResetCredits`
   (`availableCount`, and per credit `id`, `resetType`, `status`, `grantedAt`,
   `expiresAt`, `title`). Seen live on 2026-11-27 from the Windows Codex desktop
   app-server for a Plus account (3 credits, expiring 2, 13 and 26 Dec). The
   bundled 0.171.0 app-server binary has the same field names. Claude Code
-  2.1.332 has no such credits; Antigravity was not checked for one.
+  2.1.332 has no such credits.
 - `CodexEngine.parseResetCredits` keeps credits with status `available`, soonest
   to expire first; null when the result has no bank, so the last count stays.
   `AccountUsageBook` stores them per saved account (optional `bank` field; old
@@ -17,8 +17,20 @@
 - Windows: `:core:test :engine-codex:test :app:testDevDebugUnitTest
   :app:assembleDevDebug :app:lintDevDebug --no-daemon` passed (core 1035,
   engine-codex 142, app 214 tests; lint clean).
-- Gaps: not yet seen on a phone. A non-live account's count updates only when
-  it is live (the usage-window starter still returns windows only). No expiry
+- A non-live account's count updates when it is live, or when "Start usage
+  windows" runs a side start for it: `CodexWindowStarter` now returns the same
+  read's resets with the windows. With usage windows off, a non-live account
+  shows its count from the last time it was live.
+- Antigravity: the `agy` binary has `QuotaSummaryBankedReset` (`banked_resets`
+  omitempty, `reset_id`, `display_label`, `expire_time`, `claimable`,
+  `ineligible_reason`, `remaining_count`). `AntigravityUsage.parseBankedResets`
+  reads it from the same zero-turn `/usage` reply (snake or camel case; one
+  credit per remaining reset; unclaimable ones kept and marked). A successful
+  reply without the key means none. Shown in the usage panel for an
+  Antigravity chat and on that computer's widget row. The shape comes from the
+  binary's field tags only: this account's reply had no `banked_resets`, so it
+  was never parsed from a live reply.
+- Gaps: not yet seen on a phone. No expiry
   warning and no "use a reset" action (`account/rateLimitResetCredit/consume`
   exists but spends a credit).
 

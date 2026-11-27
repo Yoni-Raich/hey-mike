@@ -468,6 +468,11 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                     }.orEmpty()
                     EngineKind.CODEX -> engines.limits(kind)
                 },
+                antigravityResetCredits = if (kind == EngineKind.ANTIGRAVITY) {
+                    computer?.let(antigravityUsage::get)?.resetCredits?.current(System.currentTimeMillis() / 1000L)
+                } else {
+                    null
+                },
                 usageReadAtMillis = when (kind) {
                     EngineKind.CLAUDE -> state.claude.usageReadAtMillis
                     EngineKind.ANTIGRAVITY -> computer?.let(antigravityUsage::get)?.readAtMillis
@@ -1626,15 +1631,16 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun fetchAntigravityUsage(computer: String) {
-        val limits = graph.remote.antigravityUsage(computer)
+        val reading = graph.remote.antigravityUsage(computer)
+        val limits = reading.limits
         val now = System.currentTimeMillis()
-        antigravityUsage[computer] = AccountUsage(computer, limits, now)
+        antigravityUsage[computer] = AccountUsage(computer, limits, now, reading.resetCredits)
         antigravityUsageRefreshAt[computer] = System.nanoTime()
         project()
         withContext(Dispatchers.IO) {
             runCatching {
                 val savedIds = graph.computers.state.value.computers.map { it.id }
-                graph.antigravityUsage.record(computer, limits, savedIds)
+                graph.antigravityUsage.record(computer, limits, savedIds, reading.resetCredits)
             }
             refreshWidget()
         }
@@ -1862,6 +1868,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             },
         )
         mutable.update { it.copy(usageWindows = ui) }
+        // A window start may have read another account's banked resets.
+        viewModelScope.launch(Dispatchers.IO) { showResetCredits() }
     }
 
     /** On: the next start is planned at once, and windows that are not running start now. */

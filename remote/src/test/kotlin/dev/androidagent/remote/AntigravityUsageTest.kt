@@ -158,6 +158,33 @@ class AntigravityUsageTest {
         assertEquals(4_320L, limits[1].windowMinutes)
     }
 
+    // Not captured live: this account had no banked reset. The keys follow agy's own
+    // field tags (QuotaSummaryBankedReset); `banked_resets` is omitempty there.
+    private val bankedJson = """
+        {"status":"SUCCESS","num_turns":0,"command":{"name":"usage","data":{
+          "groups":[{"name":"Gemini Models","buckets":[{"id":"gemini-5h","window":"5h","remaining_fraction":0.5,"reset_time":"2026-11-24T09:13:36Z"}]}],
+          "banked_resets":[
+            {"reset_id":"r-late","display_label":"Gemini reset","expire_time":"2026-12-10T00:00:00Z","claimable":true,"remaining_count":2},
+            {"reset_id":"r-soon","display_label":"Claude & GPT reset","expire_time":{"seconds":1795000000},"claimable":false,"ineligible_reason":"USAGE_BELOW_THRESHOLD"}
+          ]}}}
+    """.trimIndent()
+
+    @Test fun bankedResetsCountEachRemainingResetAndKeepUnclaimableOnes() {
+        val bank = AntigravityUsage.parseBankedResets(bankedJson)!!
+        assertEquals(3, bank.available)
+        assertEquals(listOf("r-soon", "r-late#1", "r-late#2"), bank.credits.map { it.id })
+        assertEquals(1_795_000_000L, bank.nextToExpire?.expiresAt)
+        assertEquals("Claude & GPT reset · not claimable yet", bank.credits[0].title)
+        assertEquals("Gemini reset", bank.credits[1].title)
+        assertEquals(Instant.parse("2026-12-10T00:00:00Z").epochSecond, bank.credits[1].expiresAt)
+    }
+
+    @Test fun successfulReplyWithoutBankedResetsMeansNoneAndFailureMeansUnknown() {
+        assertEquals(0, AntigravityUsage.parseBankedResets(sampleJson)?.available)
+        assertNull(AntigravityUsage.parseBankedResets("""{"status":"ERROR"}"""))
+        assertNull(AntigravityUsage.parseBankedResets("not json"))
+    }
+
     @Test fun installedCliReportsStructuredUsageWhenSignedIn() {
         val executable = System.getenv("MIKE_TEST_AGY")
         org.junit.Assume.assumeTrue(!executable.isNullOrBlank())

@@ -145,7 +145,12 @@ data class AccountUsageRow(
 data class ClaudeAccountUsage(val label: String, val reading: UsageReading?)
 
 /** One saved computer's last Antigravity quota reading, for the home screen widget. */
-data class AntigravityAccountUsage(val computerId: String, val label: String, val reading: UsageReading)
+data class AntigravityAccountUsage(
+    val computerId: String,
+    val label: String,
+    val reading: UsageReading,
+    val resetCredits: ResetCredits? = null,
+)
 
 /** Pure shaping for the usage widget, kept here so it is tested without Android. */
 object AccountUsageOverview {
@@ -178,6 +183,7 @@ object AccountUsageOverview {
             window = UsageSummary.primary(windows) ?: windows.firstOrNull(),
             readText = readText(entry.reading.readAtMillis, nowMillis),
             engine = EngineKind.ANTIGRAVITY,
+            resetCredits = entry.resetCredits?.current(nowMillis / 1000L),
         )
     }
 

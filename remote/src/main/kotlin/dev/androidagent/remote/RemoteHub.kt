@@ -122,11 +122,12 @@ class RemoteHub(
         AntigravityModels.parse(listing.stdout).ifEmpty { error("Antigravity returned no models.") }
     }
 
-    /** Current Antigravity quota windows from this computer's CLI (`agy -p /usage`, zero token spend). */
-    suspend fun antigravityUsage(id: String): List<dev.androidagent.core.UsageLimit> = withContext(Dispatchers.IO) {
+    /** Current Antigravity quota windows and banked resets from this computer's CLI (`agy -p /usage`, zero token spend). */
+    suspend fun antigravityUsage(id: String): AntigravityUsageReading = withContext(Dispatchers.IO) {
         val result = runAntigravityCli(id, listOf("-p", "/usage", "--output-format", "json", "--print-timeout", "15s"))
         checkAntigravityCli(id, result, fallback = "Could not read Antigravity usage")
-        AntigravityUsage.parse(result.stdout).ifEmpty { error("Antigravity returned no usage data.") }
+        val limits = AntigravityUsage.parse(result.stdout).ifEmpty { error("Antigravity returned no usage data.") }
+        AntigravityUsageReading(limits, AntigravityUsage.parseBankedResets(result.stdout) ?: dev.androidagent.core.ResetCredits(0))
     }
 
     private suspend fun runAntigravityCli(id: String, args: List<String>, timeoutMs: Long = 20_000): ExecResult {

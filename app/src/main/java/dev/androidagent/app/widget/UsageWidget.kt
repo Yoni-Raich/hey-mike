@@ -103,7 +103,7 @@ object UsageWidget {
         val savedAntigravity = graph.antigravityUsage.all()
         val antigravity = graph.computers.state.value.computers.mapNotNull { computer ->
             savedAntigravity[computer.id]?.let { usage ->
-                AntigravityAccountUsage(computer.id, computer.label, UsageReading(usage.limits, usage.readAtMillis))
+                AntigravityAccountUsage(computer.id, computer.label, UsageReading(usage.limits, usage.readAtMillis), usage.resetCredits)
             }
         }
         val rows = AccountUsageOverview.rows(graph.accounts.state(), graph.usageBook.all(), System.currentTimeMillis(), claude, antigravity)

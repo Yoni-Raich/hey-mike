@@ -224,6 +224,20 @@ class AccountUsageBookTest {
         assertEquals(setOf("server"), book.all().keys)
     }
 
+    @Test fun antigravityRowCarriesItsBankedResetsWithoutExpiredOnes() {
+        val vault = AccountVaultState(listOf(work), activeId = "work")
+        val bank = ResetCredits(
+            2,
+            listOf(ResetCredit("gone", expiresAt = nowSeconds - 1), ResetCredit("kept", expiresAt = nowSeconds + 7_200)),
+        )
+        val agy = listOf(
+            AntigravityAccountUsage("pc-1", "Pc", UsageReading(listOf(UsageLimit("Gemini · 5-hour", 10.0, nowSeconds + 900, 300)), nowMillis), bank),
+        )
+        val row = AccountUsageOverview.rows(vault, emptyMap(), nowMillis, antigravity = agy).last()
+        assertEquals(1, row.resetCredits?.available)
+        assertEquals("kept", row.resetCredits?.credits?.single()?.id)
+    }
+
     @Test fun antigravityComputersAppearWithTheirOwnReadingsAndResets() {
         val vault = AccountVaultState(listOf(work), activeId = "work")
         val agy = listOf(
