@@ -390,6 +390,7 @@ private fun StatusSheet(state: AgentUiState, actions: AgentUiActions, onDismiss:
                 )
             }
             windows.forEach { window -> UsageWindowRow(window) }
+            if (state.activeEngine == EngineKind.CODEX) ResetCreditsRows(state.savedAccounts.activeId?.let(state.resetCredits::get))
             // Claude and Antigravity limits can be a saved reading: say how old it is.
             val readAt = state.usageReadAtMillis ?: state.claude.usageReadAtMillis.takeIf { state.activeEngine == EngineKind.CLAUDE }
             if (state.activeEngine in setOf(EngineKind.CLAUDE, EngineKind.ANTIGRAVITY) && windows.isNotEmpty() && readAt != null) {

@@ -25,7 +25,13 @@ import kotlinx.serialization.json.Json
 import java.io.File
 
 /** The last quota Codex reported for one saved account, and when it did. */
-data class AccountUsage(val accountId: String, val limits: List<UsageLimit>, val readAtMillis: Long)
+data class AccountUsage(
+    val accountId: String,
+    val limits: List<UsageLimit>,
+    val readAtMillis: Long,
+    /** The resets this account had banked at its last reading; null when never read. */
+    val resetCredits: ResetCredits? = null,
+)
 
 /**
  * The last quota reading of every saved account.
@@ -35,7 +41,8 @@ data class AccountUsage(val accountId: String, val limits: List<UsageLimit>, val
  * the home screen widget show every account: the live one as it is now, the
  * others as they were when they were last in use.
  *
- * The file holds percentages and reset times only, never credentials.
+ * The file holds percentages, reset times and banked-reset expiry dates
+ * only, never credentials.
  */
 class AccountUsageBook(
     private val file: File,
@@ -52,12 +59,25 @@ class AccountUsageBook(
      * Keep [limits] as the latest reading of [accountId]. Readings of accounts
      * that are not in [saved] any more are dropped on the way, so a removed
      * account does not linger on the widget.
+     *
+     * [resetCredits] null means "not said this time": the account's last
+     * known banked resets stay as they were.
      */
-    fun record(accountId: String, limits: List<UsageLimit>, saved: Collection<String>) = synchronized(lock) {
+    fun record(
+        accountId: String,
+        limits: List<UsageLimit>,
+        saved: Collection<String>,
+        resetCredits: ResetCredits? = null,
+    ) = synchronized(lock) {
+        val current = read()
+        val previous = current.firstOrNull { it.accountId == accountId }
         // An empty list is "not known yet", not "no quota": keep the last real reading.
-        if (limits.isEmpty()) return@synchronized
-        val kept = read().filter { it.accountId != accountId && it.accountId in saved }
-        write(kept + Entry(accountId, clock(), limits.map(Window::from)))
+        if (limits.isEmpty() && (resetCredits == null || previous == null)) return@synchronized
+        val kept = current.filter { it.accountId != accountId && it.accountId in saved }
+        val windows = if (limits.isEmpty()) previous!!.windows else limits.map(Window::from)
+        val readAt = if (limits.isEmpty()) previous!!.readAt else clock()
+        val bank = resetCredits?.let(Bank::from) ?: previous?.bank
+        write(kept + Entry(accountId, readAt, windows, bank))
     }
 
     /** Drop the saved reading of [accountId], such as when a saved computer is removed. */
@@ -79,9 +99,21 @@ class AccountUsageBook(
     private data class Book(val accounts: List<Entry> = emptyList())
 
     @Serializable
-    private data class Entry(val accountId: String, val readAt: Long, val windows: List<Window>) {
-        fun toUsage() = AccountUsage(accountId, windows.map { it.toLimit() }, readAt)
+    private data class Entry(val accountId: String, val readAt: Long, val windows: List<Window>, val bank: Bank? = null) {
+        fun toUsage() = AccountUsage(accountId, windows.map { it.toLimit() }, readAt, bank?.toCredits())
     }
+
+    @Serializable
+    private data class Bank(val available: Int = 0, val credits: List<Credit> = emptyList()) {
+        fun toCredits() = ResetCredits(available, credits.map { ResetCredit(it.id, it.title, it.grantedAt, it.expiresAt) })
+
+        companion object {
+            fun from(value: ResetCredits) = Bank(value.available, value.credits.map { Credit(it.id, it.title, it.grantedAt, it.expiresAt) })
+        }
+    }
+
+    @Serializable
+    private data class Credit(val id: String = "", val title: String? = null, val grantedAt: Long? = null, val expiresAt: Long? = null)
 
     @Serializable
     private data class Window(val name: String, val usedPercent: Double? = null, val resetsAt: Long? = null, val windowMinutes: Long? = null) {
@@ -105,6 +137,8 @@ data class AccountUsageRow(
     val readText: String?,
     /** Which engine the account signs in to. */
     val engine: EngineKind = EngineKind.CODEX,
+    /** Banked resets not yet expired; null when the engine has none or never said. */
+    val resetCredits: ResetCredits? = null,
 )
 
 /** The signed-in Claude account and the last quota Claude reported for it. */
@@ -173,6 +207,7 @@ object AccountUsageOverview {
                 live = live,
                 window = UsageSummary.primary(windows) ?: windows.firstOrNull(),
                 readText = if (live || reading == null) null else readText(reading.readAtMillis, nowMillis),
+                resetCredits = reading?.resetCredits?.current(nowSeconds),
             )
         }
     }
@@ -188,6 +223,42 @@ object AccountUsageOverview {
             limit.copy(usedPercent = 0.0, resetsAt = null)
         } else {
             limit
+        }
+    }
+
+    /**
+     * "3 resets · next expires in 4d", "1 reset · expires in 6h", or null
+     * when nothing is banked. Short enough for the widget and a list row.
+     */
+    fun resetCreditsText(credits: ResetCredits?, nowSeconds: Long): String? {
+        val current = credits?.current(nowSeconds) ?: return null
+        if (current.available <= 0) return null
+        val count = if (current.available == 1) "1 reset" else "${current.available} resets"
+        val expires = current.nextToExpire?.expiresAt?.let { untilText(it, nowSeconds) } ?: return count
+        return if (current.available == 1) "$count · expires in $expires" else "$count · next expires in $expires"
+    }
+
+    /**
+     * One banked reset on its own line: what it resets and when it is lost,
+     * as "Full reset (Weekly + 5 hr) · expires Wed 2 Dec, 00:10 (in 4d 11h)".
+     */
+    fun resetCreditLine(credit: ResetCredit, nowSeconds: Long, zone: java.time.ZoneId): String {
+        val title = credit.title?.trim()?.ifBlank { null } ?: "Rate limit reset"
+        val expires = credit.expiresAt ?: return "$title · no expiry date"
+        val at = java.time.Instant.ofEpochSecond(expires).atZone(zone)
+        val date = at.format(java.time.format.DateTimeFormatter.ofPattern("EEE d MMM, HH:mm", java.util.Locale.ENGLISH))
+        return "$title · expires $date (in ${untilText(expires, nowSeconds)})"
+    }
+
+    /** "4d 3h", "5h 12m", "40m": time left until [atSeconds], never negative. */
+    fun untilText(atSeconds: Long, nowSeconds: Long): String {
+        val minutes = ((atSeconds - nowSeconds) / 60L).coerceAtLeast(0L)
+        val days = minutes / (60L * 24L)
+        val hours = (minutes / 60L) % 24L
+        return when {
+            days > 0L -> if (hours > 0L) "${days}d ${hours}h" else "${days}d"
+            minutes >= 60L -> "${minutes / 60L}h ${minutes % 60L}m"
+            else -> "${minutes.coerceAtLeast(1L)}m"
         }
     }
 

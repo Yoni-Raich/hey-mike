@@ -307,6 +307,25 @@ data class TokenUsage(
 )
 data class UsageLimit(val name: String, val usedPercent: Double?, val resetsAt: Long? = null, val windowMinutes: Long? = null)
 /**
+ * One banked rate-limit reset: a credit the plan granted that clears the
+ * account's windows when redeemed. [grantedAt] and [expiresAt] are epoch
+ * seconds; an unused credit is lost at [expiresAt].
+ */
+data class ResetCredit(val id: String, val title: String? = null, val grantedAt: Long? = null, val expiresAt: Long? = null)
+
+/** The resets an account has banked and not used yet, soonest to expire first. */
+data class ResetCredits(val available: Int, val credits: List<ResetCredit> = emptyList()) {
+    /** Only the credits that have not expired by [nowSeconds]. */
+    fun current(nowSeconds: Long): ResetCredits {
+        val kept = credits.filter { it.expiresAt == null || it.expiresAt > nowSeconds }
+        val lost = credits.size - kept.size
+        return ResetCredits((available - lost).coerceAtLeast(kept.size), kept)
+    }
+
+    /** The credit that expires first, or null when none says when. */
+    val nextToExpire: ResetCredit? get() = credits.filter { it.expiresAt != null }.minByOrNull { it.expiresAt!! }
+}
+/**
  * Where one run's wall clock went.
  *
  * [toolMs] is device time only and [approvalMs] is a person deciding, so the
@@ -337,7 +356,13 @@ sealed interface EngineEvent {
         val wake: String? = null) : EngineEvent
     data class TextDelta(val text: String, val threadId: String? = null, val turnId: String? = null, val itemId: String? = null) : EngineEvent
     data class MessageCompleted(val text: String, val threadId: String, val turnId: String, val itemId: String, val phase: String? = null) : EngineEvent
-    data class UsageChanged(val threadId: String?, val usage: TokenUsage? = null, val limits: List<UsageLimit>? = null) : EngineEvent
+    data class UsageChanged(
+        val threadId: String?,
+        val usage: TokenUsage? = null,
+        val limits: List<UsageLimit>? = null,
+        /** Banked resets, when the engine said; null leaves the last known count alone. */
+        val resetCredits: ResetCredits? = null,
+    ) : EngineEvent
     data class GeneratedImage(val threadId: String, val turnId: String, val itemId: String, val base64: String, val savedPath: String?) : EngineEvent
     data class ToolCall(val requestId: String, val name: String, val arguments: JsonObject, val threadId: String? = null, val turnId: String? = null) : EngineEvent
     data class Approval(val requestId: String, val method: String, val details: JsonObject, val threadId: String? = null, val turnId: String? = null) : EngineEvent

@@ -1302,6 +1302,7 @@ private fun ColumnScope.UsageSettings(state: AgentUiState, actions: AgentUiActio
         )
     }
     windows.forEach { window -> UsageWindowRow(window) }
+    if (state.activeEngine == EngineKind.CODEX) ResetCreditsRows(state.savedAccounts.activeId?.let(state.resetCredits::get))
     val readAt = state.usageReadAtMillis ?: state.claude.usageReadAtMillis.takeIf { state.activeEngine == EngineKind.CLAUDE }
     if (state.activeEngine in setOf(EngineKind.CLAUDE, EngineKind.ANTIGRAVITY) && windows.isNotEmpty() && readAt != null) {
         Explanation(AccountUsageOverview.readText(readAt, System.currentTimeMillis()))

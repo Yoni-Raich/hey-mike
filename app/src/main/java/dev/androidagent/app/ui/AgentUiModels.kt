@@ -133,6 +133,8 @@ data class AgentUiState(
     val accountStatus: AccountStatus? = null,
     /** Every Codex sign-in saved on this phone and which one is live. */
     val savedAccounts: dev.androidagent.core.AccountVaultState = dev.androidagent.core.AccountVaultState(),
+    /** Banked Codex resets by saved account id, as each account last reported them. */
+    val resetCredits: Map<String, dev.androidagent.core.ResetCredits> = emptyMap(),
     /** An account switch is stopping and restarting Codex. */
     val isSwitchingAccount: Boolean = false,
     /** Starting each account's 5-hour window by itself when the last one ends. */

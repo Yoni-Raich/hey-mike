@@ -59,7 +59,9 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.androidagent.core.AccountUsageOverview
 import dev.androidagent.core.EngineKind
+import dev.androidagent.core.ResetCredits
 import dev.androidagent.core.TokenUsage
 import dev.androidagent.core.UsageSummary
 import dev.androidagent.core.UsageWindow
@@ -210,6 +212,36 @@ fun UsageWindowRow(window: UsageWindow) {
         QuotaBar(fraction)
         window.resetText?.let {
             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+/**
+ * The resets this account has banked: how many, and when each one is lost.
+ * Nothing is drawn when none are banked, so plans without them see no change.
+ */
+@Composable
+fun ResetCreditsRows(credits: ResetCredits?) {
+    val nowSeconds = System.currentTimeMillis() / 1000L
+    val current = remember(credits) { credits?.current(nowSeconds) }
+    if (current == null || current.available <= 0) return
+    val zone = remember { java.time.ZoneId.systemDefault() }
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Banked resets", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+            Text(
+                current.available.toString(),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+        current.credits.forEach { credit ->
+            Text(
+                AccountUsageOverview.resetCreditLine(credit, nowSeconds, zone),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

@@ -313,7 +313,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 is EngineEvent.UsageChanged -> {
                     usageChanged(EngineKind.CODEX, event)
-                    event.limits?.let(::recordUsage)
+                    if (event.limits != null || event.resetCredits != null) recordUsage(event.limits.orEmpty(), event.resetCredits)
                 }
                 EngineEvent.SkillsChanged -> runCatching { loadSlashCatalog(forceReload = false) }
                 is EngineEvent.Failure -> if (!graph.coordinator.anyActive) error(event.message)
@@ -1837,6 +1837,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         val saved = runCatching { withContext(Dispatchers.IO) { graph.accounts.state() } }.getOrNull() ?: return
         val changed = saved != mutable.value.savedAccounts
         mutable.update { it.copy(savedAccounts = saved) }
+        withContext(Dispatchers.IO) { showResetCredits() }
         // Which account is in use, and which are saved, is on the widget too.
         if (changed) {
             dev.androidagent.app.widget.UsageWidget.refresh(getApplication())
@@ -1884,17 +1885,25 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
      * The vault on disk names the live account, not the UI state: during a
      * switch the new account's quota arrives before the UI has caught up.
      */
-    private fun recordUsage(limits: List<UsageLimit>) {
-        if (limits.isEmpty()) return
+    private fun recordUsage(limits: List<UsageLimit>, resetCredits: dev.androidagent.core.ResetCredits? = null) {
+        if (limits.isEmpty() && resetCredits == null) return
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
                 val vault = graph.accounts.state()
                 val live = vault.activeId ?: return@runCatching
-                graph.usageBook.record(live, limits, vault.accounts.map { it.id })
+                graph.usageBook.record(live, limits, vault.accounts.map { it.id }, resetCredits)
+                showResetCredits()
                 dev.androidagent.app.widget.UsageWidget.refresh(getApplication())
-                graph.usageWindows.rearm()
+                if (limits.isNotEmpty()) graph.usageWindows.rearm()
             }
         }
+    }
+
+    /** Each saved account's banked resets, from the book, for the usage panel and the account list. */
+    private fun showResetCredits() {
+        val credits = runCatching { graph.usageBook.all() }.getOrDefault(emptyMap())
+            .mapNotNull { (id, usage) -> usage.resetCredits?.let { id to it } }.toMap()
+        mutable.update { if (it.resetCredits == credits) it else it.copy(resetCredits = credits) }
     }
     fun refreshAccount() = task {
         if (graph.runtime.status.value.phase !in setOf(RuntimePhase.READY, RuntimePhase.RUNNING)) return@task
